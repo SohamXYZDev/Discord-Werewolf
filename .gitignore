@@ -1,3 +1,11 @@
+# Environment variables (NEVER commit these!)
+.env
+.env.local
+.env.production
+
+# Legacy config files (keep for backward compatibility)
+config.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
