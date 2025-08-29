@@ -31,14 +31,14 @@ except ImportError as e:
     # Fallback configuration
     config = {
         'prefix': '!',
-        'token': 'YOUR_BOT_TOKEN_HERE'
+        'token': ''
     }
 except Exception as e:
     logger.error(f"Error loading configuration: {e}")
     # Fallback configuration
     config = {
         'prefix': '!',
-        'token': 'YOUR_BOT_TOKEN_HERE'
+        'token': ''
     }
 
 # ==================== COMPLETE ROLE SYSTEM ====================
@@ -2211,7 +2211,7 @@ async def start_foolish_game(ctx):
     """Start a new foolish gamemode signup"""
     await start_signup(ctx, "foolish")
 
-@bot.command(name='charming', aliases=['charm', 'piper'])
+@bot.command(name='charming', aliases=['piper'])
 async def start_charming_game(ctx):
     """Start a new charming gamemode signup"""
     await start_signup(ctx, "charming")
@@ -2226,7 +2226,7 @@ async def start_lycan_game(ctx):
     """Start a new lycan gamemode signup"""
     await start_signup(ctx, "lycan")
 
-@bot.command(name='rapidfire', aliases=['rapid', 'fire', 'chaos'])
+@bot.command(name='rapidfire', aliases=['rapid', 'fire'])
 async def start_rapidfire_game(ctx):
     """Start a new rapidfire gamemode signup"""
     await start_signup(ctx, "rapidfire")
@@ -2241,7 +2241,7 @@ async def start_bloodbath_game(ctx):
     """Start a new bloodbath gamemode signup"""
     await start_signup(ctx, "bloodbath")
 
-@bot.command(name='random', aliases=['rand', 'chaos', 'surprise'])
+@bot.command(name='random', aliases=['rand', 'surprise'])
 async def start_random_game(ctx):
     """Start a new random gamemode signup"""
     await start_signup(ctx, "random")
