@@ -113,7 +113,7 @@ class GameManager:
                 f"Day ends in **{self.day_warning_time}** seconds!\n"
                 f"Make sure to cast your vote or use `{config.prefix}abstain`."
             )
-            await send_to_game_channel(self.bot, "", embed=embed)
+            await send_to_game_channel("", embed=embed)
             
             # Wait for remaining time
             await asyncio.sleep(self.day_warning_time)
@@ -137,7 +137,7 @@ class GameManager:
                 f"Night ends in **{self.night_warning_time}** seconds!\n"
                 f"Submit your night actions quickly!"
             )
-            await send_to_game_channel(self.bot, "", embed=embed)
+            await send_to_game_channel("", embed=embed)
             
             # Wait for remaining time
             await asyncio.sleep(self.night_warning_time)
@@ -307,9 +307,9 @@ class GameManager:
             if vote_status["abstain_count"] > 0:
                 vote_summary.append(f"**Abstain**: {vote_status['abstain_count']} votes")
             
-            embed.add_field(name="Vote Summary", value="\n".join(vote_summary), inline=False)
-        
-        await send_to_game_channel(self.bot, "", embed=embed)
+                embed.add_field(name="Vote Summary", value="\n".join(vote_summary), inline=False)
+
+            await send_to_game_channel("", embed=embed)
         
         # Check win conditions
         winner_info = await self._check_win_conditions(session)
@@ -317,8 +317,17 @@ class GameManager:
             await self._end_game_with_winners(winner_info, session)
             return
         
-        # Start night phase
-        await asyncio.sleep(3)  # Brief pause
+        # If someone was lynched, proceed immediately to night
+        if any(not p.alive for p in session.get_dead_players()):
+            # Cancel timers and start night immediately
+            if self.phase_timer_task:
+                self.phase_timer_task.cancel()
+            await asyncio.sleep(1)
+            await self._start_night_phase_messages(session)
+            return
+
+        # Otherwise start night phase after a brief pause
+        await asyncio.sleep(3)
         await self._start_night_phase_messages(session)
     
     async def end_night_phase(self):
@@ -343,8 +352,8 @@ class GameManager:
         
         if results["other_effects"]:
             embed.add_field(name="Other Effects", value="\n".join(results["other_effects"]), inline=False)
-        
-        await send_to_game_channel(self.bot, "", embed=embed)
+
+        await send_to_game_channel("", embed=embed)
         
         # Check win conditions
         winner_info = await self._check_win_conditions(session)
@@ -352,8 +361,15 @@ class GameManager:
             await self._end_game_with_winners(winner_info, session)
             return
         
-        # Start day phase
-        await asyncio.sleep(3)  # Brief pause
+        # Start day phase immediately if anyone died or if night actions indicate immediate day
+        if results["deaths"] or getattr(session, 'force_day', False):
+            if self.phase_timer_task:
+                self.phase_timer_task.cancel()
+            await asyncio.sleep(1)
+            await self._start_day_phase_messages(session)
+            return
+
+        await asyncio.sleep(3)
         await self._start_day_phase_messages(session)
     
     async def _handle_lynch_effects(self, lynched_player, session):
@@ -503,9 +519,12 @@ class GameManager:
         
         alive_players = session.get_alive_players()
         
+        # Ping all living players in the game channel to notify them
+        mentions = " ".join(p.user.mention for p in alive_players)
         embed = create_embed(
             f"☀️ Day {self.day_count}",
             f"The sun rises on a new day. **{len(alive_players)}** players remain.\n\n"
+            f"{mentions}\n\n"
             f"Discuss and vote to lynch someone you suspect of being a wolf.\n"
             f"Use `{config.prefix}vote <player>` to cast your vote.\n"
             f"Use `{config.prefix}abstain` to abstain from voting."
@@ -522,23 +541,27 @@ class GameManager:
             value=f"Day phase lasts **{self.day_duration // 60}** minutes.",
             inline=True
         )
-        
-        await send_to_game_channel(self.bot, "", embed=embed)
+
+        await send_to_game_channel(mentions, embed=embed)
     
     async def _start_night_phase_messages(self, session):
         """Send messages for start of night phase"""
         self.start_night_phase()
-        
+        # Ping living players in the game channel to notify them of night
+        alive_players = session.get_alive_players()
+        mentions = " ".join(p.user.mention for p in alive_players)
+
         embed = create_embed(
             f"🌙 Night {self.night_count}",
             f"Night falls and the village sleeps...\n\n"
+            f"{mentions}\n\n"
             f"Players with night actions should check their DMs and submit their actions.\n"
             f"Night phase lasts **{self.night_duration // 60}** minutes."
         )
-        
-        await send_to_game_channel(self.bot, "", embed=embed)
-        
-        # Send night action prompts to relevant players
+
+        await send_to_game_channel(mentions, embed=embed)
+
+        # Send night action prompts to relevant players via DM
         await self._send_night_action_prompts(session)
     
     async def _send_night_action_prompts(self, session):
@@ -546,6 +569,11 @@ class GameManager:
         for player in session.get_alive_players():
             role = player.role
             if role.can_act("night"):
+                # DM the player their prompt and ping in DM
+                try:
+                    await send_dm(player.user, content=f"Night {self.night_count}: you have a night action. Check below for details.")
+                except Exception:
+                    pass
                 await self._send_role_prompt(player, session)
 
     async def _send_role_prompt(self, player, session):

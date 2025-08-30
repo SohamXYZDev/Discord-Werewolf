@@ -234,6 +234,16 @@ def initialize_logger() -> logging.Logger:
     file_handler = logging.FileHandler('werewolf_bot.log')
     file_handler.setFormatter(formatter)
     _logger.addHandler(file_handler)
+
+    # If helpers.AsyncRelayHandler is available, attach it to forward logs to Discord
+    try:
+        from src.utils.helpers import AsyncRelayHandler
+        relay_handler = AsyncRelayHandler()
+        relay_handler.setFormatter(formatter)
+        _logger.addHandler(relay_handler)
+    except Exception:
+        # Helpers may not be ready; skip relay handler
+        pass
     
     # Prevent propagation to root logger
     _logger.propagate = False

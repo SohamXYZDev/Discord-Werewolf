@@ -67,6 +67,14 @@ async def vote_command(ctx: commands.Context, target_name: str = ""):
             )
             
             await ctx.send(embed=embed)
+            # If majority reached, trigger immediate lynch processing
+            vote_status = session.game_manager.get_vote_status(session)
+            if vote_status.get('has_majority'):
+                # Call end_day_phase asynchronously (the GameManager handles checks)
+                try:
+                    asyncio.create_task(session.game_manager.end_day_phase())
+                except Exception:
+                    logger.exception('Failed to trigger immediate lynch processing')
         else:
             await ctx.send(f"❌ {message}")
     else:
@@ -211,6 +219,51 @@ async def votes_command(ctx: commands.Context):
             embed.add_field(name="Time Remaining", value=f"{minutes}m {seconds}s", inline=True)
     
     await ctx.send(embed=embed)
+
+
+@command("vote", PermissionLevel.PLAYING, "Vote for gamemode or startgame", aliases=[], game_only=True)
+async def vote_special(ctx: commands.Context, option: str = ""):
+    """Special vote subcommand handler: currently supports `startgame` to vote to start a game in lobby."""
+    # This is a lightweight subhandler for `!vote startgame`
+    if option.lower() != "startgame":
+        return  # let normal vote_command handle other cases
+
+    session = get_session()
+    # Ensure we're in lobby
+    if session.phase != session.GamePhase.LOBBY if hasattr(session, 'GamePhase') else False:
+        await ctx.send("❌ You can only vote to start a game from the lobby.")
+        return
+
+    # Register the vote to start
+    voters = getattr(session, 'start_votes', set())
+    if ctx.author.id in voters:
+        await ctx.send("❌ You already voted to start the game.")
+        return
+
+    voters.add(ctx.author.id)
+    session.start_votes = voters
+
+    total_players = len(session.players)
+    votes_needed = (total_players // 2) + 1
+
+    await ctx.send(f"✅ Vote to start registered. {len(voters)}/{votes_needed} votes.")
+
+    if len(voters) >= votes_needed:
+        # Attempt to start the game
+        started = session.start_game()
+        if started:
+            # Attach a GameManager if missing
+            if not hasattr(session, 'game_manager'):
+                from src.game.phases import GameManager
+                session.game_manager = GameManager(ctx.bot)
+            # Start night/day flow using game_manager
+            try:
+                asyncio.create_task(session.game_manager.start_day_phase() if session.phase.value == 'day' else session.game_manager.start_night_phase())
+            except Exception:
+                logger.exception('Failed to start game flow')
+            await ctx.send("🎲 Majority reached — game starting now!")
+        else:
+            await ctx.send("❌ Could not start the game (check player count or configuration).")
 
 @command("votecount", PermissionLevel.ADMIN, "Force show detailed vote count", aliases=["vc"])
 async def votecount_command(ctx: commands.Context):

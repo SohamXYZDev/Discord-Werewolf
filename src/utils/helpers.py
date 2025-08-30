@@ -20,6 +20,10 @@ _logger = None
 # Rate limiting
 _rate_limiters: Dict[int, datetime] = {}
 
+# Simple recent-send dedupe to avoid accidental duplicate messages
+_recent_sends: Dict[tuple, datetime] = {}
+_DUPE_WINDOW_SECONDS = 2
+
 class PermissionLevel:
     """Permission levels for commands"""
     EVERYONE = 0
@@ -142,12 +146,54 @@ async def send_to_game_channel(content: str = "", embed: discord.Embed = None) -
     try:
         channel = await get_channel_by_id(_config.game_channel_id)
         if channel:
+            # Dedupe identical messages sent very recently to avoid double-posts
+            key = (channel.id, (content or "")[:200], embed.to_dict() if embed else None)
+            now = datetime.utcnow()
+            last = _recent_sends.get(key)
+            if last and (now - last).total_seconds() < _DUPE_WINDOW_SECONDS:
+                _logger.debug("Suppressed duplicate message to game channel")
+                return True
+            _recent_sends[key] = now
             await channel.send(content=content, embed=embed)
             return True
     except Exception as e:
         _logger.error(f"Error sending to game channel: {e}")
     
     return False
+
+
+async def relay_log_message(content: str = "") -> bool:
+    """Relay a log message to the configured logging channel (if set)."""
+    if not _config or not getattr(_config, 'logging_channel_id', None):
+        return False
+    try:
+        channel = await get_channel_by_id(_config.logging_channel_id)
+        if channel:
+            await channel.send(content)
+            return True
+    except Exception as e:
+        _logger.error(f"Error relaying log message: {e}")
+    return False
+
+
+import logging
+
+class AsyncRelayHandler(logging.Handler):
+    """Logging handler that relays log messages to the configured logging channel asynchronously."""
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            # Schedule the relay on the event loop
+            try:
+                asyncio.get_event_loop().create_task(relay_log_message(msg))
+            except RuntimeError:
+                # If no running loop, skip
+                pass
+        except Exception:
+            try:
+                self.handleError(record)
+            except Exception:
+                pass
 
 async def send_to_werewolf_channel(content: str = "", embed: discord.Embed = None) -> bool:
     """Send a message to the werewolf channel"""

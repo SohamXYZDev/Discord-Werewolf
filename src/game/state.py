@@ -16,6 +16,12 @@ from src.utils.helpers import create_embed
 from src.game.roles import ROLE_REGISTRY, get_role_by_name, Team, WinCondition
 
 # Note: config and logger will be imported when needed to avoid circular imports
+try:
+    config = get_config()
+    logger = get_logger()
+except RuntimeError:
+    config = None
+    logger = None
 class GamePhase(Enum):
     """Game phases"""
     LOBBY = "lobby"
@@ -123,7 +129,8 @@ class GameSession:
         if self.first_join is None:
             self.first_join = datetime.now()
         
-        _get_logger().info(f"Player {user.display_name} ({user.id}) joined the game")
+        if logger:
+            logger.info(f"Player {user.display_name} ({user.id}) joined the game")
         return True
     
     def remove_player(self, user_id: int) -> bool:
@@ -391,6 +398,18 @@ class GameSession:
         player.night_action_target = target_id
         
         logger.info(f"{player.name} submitted night action: {action_type}")
+        # If all players who can act have submitted their actions, signal to advance to day
+        remaining = [p for p in self.get_living_players() if p.role and p.role.can_act("night") and p.user_id not in self.night_actions]
+        if not remaining:
+            # Attempt to cancel any running night timer and trigger immediate day via game manager if present
+            try:
+                if hasattr(self, 'game_manager') and getattr(self.game_manager, 'phase_timer_task', None):
+                    self.game_manager.phase_timer_task.cancel()
+                    # Schedule the end of night on the loop
+                    asyncio.get_event_loop().create_task(self.game_manager.end_night_phase())
+            except Exception:
+                logger.exception("Failed to trigger immediate day after all night actions submitted")
+
         return True
     
     def wolf_vote_kill(self, wolf_id: int, target_id: int) -> bool:
