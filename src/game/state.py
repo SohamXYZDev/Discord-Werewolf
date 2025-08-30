@@ -58,12 +58,24 @@ class Player:
     
     def can_vote(self) -> bool:
         """Check if player can vote (alive and not restricted)"""
-        return self.alive and "injured" not in self.templates
+        # 'blinding' totem makes the player unable to vote; some code uses 'injured' alias
+        blocked = False
+        try:
+            blocked = ('injured' in self.templates) or ('blinding' in self.templates)
+        except Exception:
+            blocked = False
+        return self.alive and not blocked
     
     def can_act(self, phase: str) -> bool:
         """Check if player can perform their role action"""
         if not self.alive or not self.role:
             return False
+        # If the player is silenced by a totem/template, they cannot act
+        try:
+            if 'silence' in self.templates:
+                return False
+        except Exception:
+            pass
         return self.role.can_act(phase)
 
 class GameSession:
@@ -115,6 +127,8 @@ class GameSession:
     # Win tracking
     self.winners: List[int] = []
     self.win_reason = ""
+    # Totem / global flags
+    self.wolves_sick = False  # set by pestilence totem to block wolf kills next night
     
     # Player Management Methods
     
