@@ -98,38 +98,84 @@ async def help_command(ctx: commands.Context, command_name: str = ""):
         # Show general help
         session = get_session()
         available_commands = registry.get_commands_for_user(ctx.author.id, session.playing)
-        
+
         embed = create_embed("🐺 Werewolf Bot Commands")
-        
+
         # Group commands by category
         basic_commands = []
         game_commands = []
         admin_commands = []
-        
+
         for cmd in available_commands:
             cmd_str = f"`{config.prefix}{cmd.name}`"
             if cmd.permission_level == PermissionLevel.ADMIN or cmd.permission_level == PermissionLevel.OWNER:
                 admin_commands.append(cmd_str)
-            elif cmd.game_only or cmd.name in ['join', 'leave', 'vote', 'lynch']:
+            elif cmd.game_only or cmd.name in ['join', 'leave', 'vote', 'lynch', 'abstain', 'give']:
                 game_commands.append(cmd_str)
             else:
                 basic_commands.append(cmd_str)
-        
+
         if basic_commands:
             embed.add_field(name="Basic Commands", value=" • ".join(basic_commands), inline=False)
-        
+
         if game_commands:
             embed.add_field(name="Game Commands", value=" • ".join(game_commands), inline=False)
-        
+
         if admin_commands:
             embed.add_field(name="Admin Commands", value=" • ".join(admin_commands), inline=False)
-        
+
+            # Notable / New features summary
+            embed.add_field(
+                name="Notable Features",
+                value=(
+                    f"• `!vote startgame` — Players can vote to start the game; majority starts it.\n"
+                    f"• Werewolf communication is performed via DMs (no public wolfchat).\n"
+                    f"• Phase pings: the bot pings all living players at day/night start.\n"
+                    f"• Immediate transitions: day/night can end early when votes/actions complete.\n"
+                    f"• Totems: use `!totem <name>` for totem details, or `{config.prefix}role <role>` for role/gamemode descriptions."
+                ),
+                inline=False
+            )
+
+            # Explicitly list night (PM-only) actions so players know what to use in DMs
+            embed.add_field(
+                name="Night Actions (PM only)",
+                value=(
+                    "`kill` — Wolf kill target\n"
+                    "`see` — Seer/night investigator\n"
+                    "`detect` — Detective night investigation\n"
+                    "`protect` — Guardian Angel protection\n"
+                    "`pass` — Skip your night action\n"
+                    "`myrole` — Check your role and status in DMs"
+                ),
+                inline=False
+            )
+
+            # Role-specific and other role-action commands (may be PM-only depending on role)
+            embed.add_field(
+                name="Role / Action Commands",
+                value=(
+                    "`give` — Give a totem to a player (Shaman / Wolf Shaman)\n"
+                    "`observe` — Werecrow / Sorcerer observation\n"
+                    "`id` — Detective daytime identify\n"
+                    "`bless` / `consecrate` — Priest abilities\n"
+                    "`hex` / `curse` — Hag / Warlock abilities\n"
+                    "`charm` — Piper charm players\n"
+                    "`choose` — Matchmaker choose lovers\n"
+                    "`clone` — Clone another player's role\n"
+                    "`side` — Turncoat side selection\n"
+                    "`target` / `shoot` — Assassins / shooters\n"
+                    "`observe`, `detect` — alternate investigator commands"
+                ),
+                inline=False
+            )
+
         embed.add_field(
             name="More Info",
             value=f"Use `{config.prefix}help <command>` for detailed information about a specific command.",
             inline=False
         )
-        
+
         await ctx.send(embed=embed)
 
 @command("ping", PermissionLevel.EVERYONE, "Test bot responsiveness")
