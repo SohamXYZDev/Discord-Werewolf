@@ -464,43 +464,55 @@ class GameManager:
             }, session)
     
     async def _process_night_actions(self, session) -> Dict:
-        """Process all night actions and return results"""
+        """Process all night actions and return results
+
+        This implementation handles:
+        - Wolf kills with protections and totem interactions (death, lycanthropy, pestilence)
+        - Protection actions (Guardian Angel)
+        - Investigator actions (Seer/Detective) with deceit/silence handling
+        - Retribution (kill a wolf who targeted a retribution-holder)
+        - Setting session.wolves_sick when pestilence triggers
+        """
         results = {
             "deaths": {},
             "protections": [],
             "other_effects": []
         }
-        
-        # Get all wolves and their targets
-        wolf_targets = {}
+
+        # Collect wolf targets (unless wolves are sick from pestilence)
+        wolf_targets: Dict[int, int] = {}
         wolves = [p for p in session.players.values() if p.alive and p.role.info.team == Team.WOLF]
-        
-        for wolf in wolves:
-            if wolf.user_id in self.night_actions:
-                action = self.night_actions[wolf.user_id]
-                if "target" in action:
-                    target_id = action["target"]
-                    wolf_targets[target_id] = wolf_targets.get(target_id, 0) + 1
-        
-        # Process protections first
-        protections = {}
+
+        if getattr(session, 'wolves_sick', False):
+            results["other_effects"].append("The wolves are sick this night and cannot perform a kill.")
+            # consume the sickness flag
+            session.wolves_sick = False
+        else:
+            for wolf in wolves:
+                if wolf.user_id in self.night_actions:
+                    action = self.night_actions[wolf.user_id]
+                    if action and (action.get("action") == "kill" or "target" in action):
+                        target_id = action.get("target") or action.get("target_id")
+                        if target_id:
+                            wolf_targets[target_id] = wolf_targets.get(target_id, 0) + 1
+
+        # Process protections (Guardian Angel)
+        protections: Dict[int, int] = {}
         for player_id, action in self.night_actions.items():
-            player = session.players[player_id]
-            if player.role.info.name == "Guardian Angel" and "target" in action:
-                target_id = action["target"]
-                protections[target_id] = player_id
-        
+            player = session.players.get(player_id)
+            if not player:
+                continue
+            if player.role.info.name == "Guardian Angel" and action and ("target" in action or "target_id" in action):
+                target_id = action.get("target") or action.get("target_id")
+                if target_id:
+                    protections[target_id] = player_id
+
         # Process wolf kills with totem interactions
-        wolves_were_sick = False
-        killed_by_wolves = []
+        killed_by_wolves: List[Tuple[int, bool]] = []  # (player_id, had_pestilence)
         for target_id, wolf_count in wolf_targets.items():
-            # If protected by Guardian Angel
+            # Protected?
             if target_id in protections:
-                protector_id = protections[target_id]
-                protector = session.players[protector_id]
-                results["other_effects"].append(
-                    f"**{session.players[target_id].name}** was protected by a Guardian Angel!"
-                )
+                results["other_effects"].append(f"**{session.players[target_id].name}** was protected by a Guardian Angel!")
                 continue
 
             target_player = session.players.get(target_id)
@@ -509,96 +521,106 @@ class GameManager:
 
             templates = getattr(target_player, 'templates', set())
 
-            # Death totem: mark for death at end of night (still considered a death)
+            # Death totem: immediate cursed death
             if 'death' in templates:
-                # remove one-time death totem
-                try:
-                    target_player.templates.discard('death')
-                except Exception:
-                    pass
+                target_player.templates.discard('death')
                 session.kill_player(target_id, "death_totem")
                 results["deaths"][target_id] = "died from a cursed totem"
-                killed_by_wolves.append(target_id)
+                killed_by_wolves.append((target_id, False))
                 continue
 
-            # Lycanthropy: be converted instead of dying
+            # Lycanthropy: convert to wolf instead of death
             if 'lycanthropy' in templates:
-                try:
-                    target_player.templates.discard('lycanthropy')
-                except Exception:
-                    pass
-                # Convert to wolf team
-                # Attempt to find a wolf role class to assign; default to Werewolf
+                target_player.templates.discard('lycanthropy')
                 from src.game.roles import get_role_by_name
                 newrole = get_role_by_name('werewolf')
                 if newrole:
                     target_player.role = newrole
                     results["other_effects"].append(f"**{target_player.name}** was struck by lycanthropy and joined the wolves!")
-                    # converted players do not die this night
                     continue
 
-            # Pestilence on target: mark wolves sick (handled after determining which wolves targeted anyone)
+            # Pestilence: note it and remove tag
+            had_pest = False
             if 'pestilence' in templates:
-                try:
-                    target_player.templates.discard('pestilence')
-                except Exception:
-                    pass
-                wolves_were_sick = True
+                target_player.templates.discard('pestilence')
+                had_pest = True
 
             # No totem prevented death; kill the player
             session.kill_player(target_id, "wolf")
             results["deaths"][target_id] = "was killed by wolves"
-            killed_by_wolves.append(target_id)
-        
-    # Process other actions (seer, detective, etc.)
-        for player_id, action in self.night_actions.items():
-            player = session.players[player_id]
-            role = player.role
-            
-            if role.info.name in ["Seer", "Detective"] and "target" in action:
-                # Handle deceit/silence templates on the target
-                target_id = action["target"]
-                target_player = session.players.get(target_id)
-                target_templates = getattr(target_player, 'templates', set()) if target_player else set()
+            killed_by_wolves.append((target_id, had_pest))
 
-                # If silence template present on actor, they cannot act
+        # Process other nightly actions (Seer, Detective, etc.)
+        for player_id, action in self.night_actions.items():
+            player = session.players.get(player_id)
+            if not player or not action:
+                continue
+            role = player.role
+
+            if role.info.name in ["Seer", "Detective"] and ("target" in action or "target_id" in action):
+                target_id = action.get("target") or action.get("target_id")
+                target_player = session.players.get(target_id)
+                if not target_player:
+                    continue
+
+                # Silence on actor prevents action
                 actor_templates = getattr(player, 'templates', set())
                 if 'silence' in actor_templates:
-                    # actor cannot act
-                    await send_dm(player.user, "Your totem prevents you from using that ability tonight.")
+                    try:
+                        await send_dm(player.user, "Your totem prevents you from using that ability tonight.")
+                    except Exception:
+                        pass
                     continue
 
-                # If deceit on target, flip the investigation
+                # Deceit on target flips investigation
+                target_templates = getattr(target_player, 'templates', set())
                 if 'deceit' in target_templates:
-                    # Fake response
                     fake_msg = f"Investigation: {target_player.name} appears to be of the opposite alignment or an unknown role."
-                    await send_dm(player.user, fake_msg)
+                    try:
+                        await send_dm(player.user, fake_msg)
+                    except Exception:
+                        pass
                     continue
 
-                result = role.act(target=target_id, players_dict=session.players)
-                if result.get("success"):
-                    await send_dm(player.user, result.get("message") or str(result))
+                # Execute role action (assumed to return dict with success/message)
+                try:
+                    result = role.act(target=target_id, players_dict=session.players)
+                    if isinstance(result, dict) and result.get("success"):
+                        try:
+                            await send_dm(player.user, result.get("message") or str(result))
+                        except Exception:
+                            pass
+                except Exception:
+                    logger.exception(f"Error executing night action for {player.name}")
 
-        # Handle retribution: if a player with retribution was killed, pick one wolf who targeted them and kill that wolf
+        # After processing kills, handle retribution and pestilence effects
         try:
-            for dead_id in list(killed_by_wolves):
+            pestilence_triggered = False
+            for dead_id, had_pest in killed_by_wolves:
                 dead_player = session.players.get(dead_id)
                 if not dead_player:
                     continue
                 templates = getattr(dead_player, 'templates', set())
+                # Retribution: kill one wolf who targeted this player
                 if 'retribution' in templates:
-                    # find wolves who targeted this player
-                    offender_wolves = [wid for wid, tid in self.night_actions.items() if tid.get('action') == 'kill' and tid.get('target') == dead_id]
-                    # offender_wolves uses action owner ids, filter by wolf team
+                    offender_wolves = [wid for wid, act in self.night_actions.items() if act and (act.get('action') == 'kill' or 'target' in act or 'target_id' in act) and (act.get('target') == dead_id or act.get('target_id') == dead_id)]
                     wolf_offenders = [w for w in offender_wolves if w in session.players and session.players[w].role.info.team == Team.WOLF]
                     if wolf_offenders:
                         import random
                         victim_wolf = random.choice(wolf_offenders)
                         session.kill_player(victim_wolf, 'retribution_totem')
                         results['other_effects'].append(f"Retribution activated: a wolf ({session.players[victim_wolf].name}) has died in retaliation.")
+
+                # Pestilence: if the dead had pestilence, wolves miss next night
+                if had_pest:
+                    session.wolves_sick = True
+                    pestilence_triggered = True
+
+            if pestilence_triggered:
+                results['other_effects'].append("Pestilence activated: wolves will be unable to kill on the following night.")
         except Exception:
-            logger.exception('Error handling retribution totem')
-        
+            logger.exception('Error handling retribution/pestilence totems')
+
         return results
     
     async def _check_win_conditions(self, session) -> Optional[Dict]:
@@ -813,117 +835,3 @@ class GameManager:
         
         except Exception as e:
             logger.error(f"Error sending role prompt to {player.name}: {e}")
-
-    async def _process_night_actions(self, session):
-        """Process all night actions and determine results"""
-        try:
-            # Get all werewolf kills
-            werewolf_targets = set()
-            for player_id, action in self.night_actions.items():
-                if action.get("action") == "kill":
-                    werewolf_targets.add(action["target_id"])
-            
-            # Get protections
-            protected_players = set()
-            for player_id, action in self.night_actions.items():
-                if action.get("action") == "protect":
-                    protected_players.add(action["target_id"])
-            
-            # Calculate actual kills (targets not protected)
-            actual_kills = werewolf_targets - protected_players
-            
-            # Process kills
-            killed_players = []
-            for player_id in actual_kills:
-                if player_id in session.players:
-                    player = session.players[player_id]
-                    if player.alive:
-                        player.alive = False
-                        killed_players.append(player)
-            
-            # Store investigation results for day phase
-            self.investigation_results = []
-            for player_id, action in self.night_actions.items():
-                if action.get("action") in ["see", "detect"]:
-                    investigator = session.players[player_id]
-                    target = session.players[action["target_id"]]
-                    
-                    if action["action"] == "see":
-                        # Seer sees role alignment
-                        is_evil = target.role.team.value == "werewolf"
-                        result = "evil" if is_evil else "good"
-                    else:  # detect
-                        # Detective sees exact role
-                        result = target.role.name
-                    
-                    self.investigation_results.append({
-                        "investigator_id": investigator.user_id,
-                        "target_name": target.name,
-                        "result": result,
-                        "action_type": action["action"]
-                    })
-            
-            return killed_players
-        
-        except Exception as e:
-            logger.error(f"Error processing night actions: {e}")
-            return []
-
-    async def _handle_lynch_effects(self, lynched_player, session):
-        """Handle special effects when certain roles are lynched"""
-        role_name = lynched_player.role.name
-        
-        # Fool effect - ends game with fool win
-        if role_name == "Fool":
-            await session.end_game(f"💀 {lynched_player.name} was lynched! The **Fool** wins by being eliminated!")
-            return
-        
-        # Jester effect - kills a random voter
-        if role_name == "Jester":
-            # Get players who voted for the jester
-            voters = [pid for pid, target in self.votes.items() if target == lynched_player.user_id]
-            if voters:
-                import random
-                victim_id = random.choice(voters)
-                victim = session.players[victim_id]
-                session.kill_player(victim_id, "jester_revenge")
-                
-                embed = create_embed("💀 Jester's Revenge!")
-                embed.add_field(
-                    name="Supernatural Vengeance",
-                    value=f"The **Jester** {lynched_player.name} has taken revenge!\n"
-                          f"**{victim.name}** has been killed by supernatural forces!",
-                    inline=False
-                )
-                await session.channel.send(embed=embed)
-
-    def check_win_conditions(self, session) -> Tuple[bool, str, str]:
-        """Check if any team has won the game"""
-        alive_players = session.get_alive_players()
-        
-        if not alive_players:
-            return True, "draw", "No players remain alive. The game ends in a draw."
-        
-        # Count alive players by team
-        team_counts = {"village": 0, "werewolf": 0, "independent": 0}
-        
-        for player in alive_players:
-            team = player.role.team.value
-            if team in team_counts:
-                team_counts[team] += 1
-        
-        # Check werewolf win condition
-        if team_counts["werewolf"] >= team_counts["village"]:
-            return True, "werewolf", "🐺 **Werewolves Win!** They have eliminated enough villagers to take control."
-        
-        # Check village win condition
-        if team_counts["werewolf"] == 0:
-            return True, "village", "👥 **Village Wins!** All werewolves have been eliminated."
-        
-        # Check independent win conditions (if any special roles won)
-        for player in alive_players:
-            role_name = player.role.name
-            if role_name == "Survivor" and team_counts["village"] + team_counts["werewolf"] <= 3:
-                return True, "survivor", f"🏃 **Survivor Wins!** {player.name} has survived to the final few players."
-        
-        return False, "", ""
