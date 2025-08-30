@@ -160,16 +160,15 @@ class GameManager:
         if not voter.alive:
             return False, "Dead players cannot vote."
         
-        # Handle abstain vote
+        # Handle explicit abstain
         if target_id is None:
-            # Remove previous vote if any
+            # Remove previous vote mapping if present
             if voter_id in self.votes:
-                old_target = self.votes[voter_id]
-                self.vote_counts[old_target] -= 1
-                if self.vote_counts[old_target] <= 0:
-                    del self.vote_counts[old_target]
-                del self.votes[voter_id]
-            
+                try:
+                    del self.votes[voter_id]
+                except KeyError:
+                    pass
+
             self.abstain_votes.add(voter_id)
             return True, "You have abstained from voting."
         
@@ -183,19 +182,33 @@ class GameManager:
         
         # Remove from abstain if they were abstaining
         self.abstain_votes.discard(voter_id)
-        
-        # Update vote counts
-        if voter_id in self.votes:
-            # Remove old vote
-            old_target = self.votes[voter_id]
-            self.vote_counts[old_target] -= 1
-            if self.vote_counts[old_target] <= 0:
-                del self.vote_counts[old_target]
-        
-        # Add new vote
+
+        # If player has pacifism totem/template, force abstain
+        try:
+            templates = getattr(voter, 'templates', set())
+        except Exception:
+            templates = set()
+
+        if 'pacifism' in templates:
+            # Ensure they are in abstain list and remove any vote mapping
+            if voter_id in self.votes:
+                try:
+                    del self.votes[voter_id]
+                except KeyError:
+                    pass
+            self.abstain_votes.add(voter_id)
+            return True, "Your totem forces you to abstain from voting."
+
+        # Record the vote (we calculate weighted counts in get_vote_status)
         self.votes[voter_id] = target_id
-        self.vote_counts[target_id] = self.vote_counts.get(target_id, 0) + 1
-        
+
+        # If impatience totem holder voted, attempt immediate end of day
+        if 'impatience' in templates:
+            try:
+                asyncio.get_event_loop().create_task(self.end_day_phase())
+            except Exception:
+                logger.exception('Failed to trigger immediate end_day_phase from impatience totem')
+
         return True, f"You voted to lynch **{target.name}**."
     
     async def process_night_action(self, player_id: int, action_data: Dict, session) -> Tuple[bool, str]:
@@ -223,19 +236,41 @@ class GameManager:
         """Get current voting status"""
         alive_players = session.get_alive_players()
         total_alive = len(alive_players)
-        voted_count = len(self.votes) + len(self.abstain_votes)
-        
-        # Calculate votes needed for majority
+
+        # Recompute weighted vote counts from self.votes taking totems into account
+        weighted_counts: Dict[int, int] = {}
+        explicit_voters = set()
+
+        for voter_id, target_id in list(self.votes.items()):
+            if voter_id not in session.players:
+                continue
+            if target_id not in session.players:
+                continue
+
+            voter = session.players[voter_id]
+            templates = getattr(voter, 'templates', set())
+
+            # Pacifism forces abstain
+            if 'pacifism' in templates:
+                self.abstain_votes.add(voter_id)
+                continue
+
+            weight = 2 if 'influence' in templates else 1
+            weighted_counts[target_id] = weighted_counts.get(target_id, 0) + weight
+            explicit_voters.add(voter_id)
+
+        voted_count = len(explicit_voters) + len(self.abstain_votes)
+
+        # Votes needed for majority
         majority_needed = (total_alive // 2) + 1
-        
-        # Get top voted players
-        sorted_votes = sorted(self.vote_counts.items(), key=lambda x: x[1], reverse=True)
-        
+
+        sorted_votes = sorted(weighted_counts.items(), key=lambda x: x[1], reverse=True)
+
         return {
             "total_alive": total_alive,
             "voted_count": voted_count,
             "majority_needed": majority_needed,
-            "vote_counts": self.vote_counts.copy(),
+            "vote_counts": weighted_counts,
             "abstain_count": len(self.abstain_votes),
             "top_voted": sorted_votes[:3] if sorted_votes else [],
             "has_majority": sorted_votes and sorted_votes[0][1] >= majority_needed
@@ -324,6 +359,30 @@ class GameManager:
             await asyncio.sleep(1)
             await self._start_night_phase_messages(session)
             return
+
+        # Desperation totem: holders who did not vote or abstain die now
+        try:
+            deserters = []
+            for p in session.get_living_players():
+                templates = getattr(p, 'templates', set())
+                if 'desperation' in templates:
+                    if p.user_id not in self.votes and p.user_id not in self.abstain_votes:
+                        deserters.append(p)
+
+            if deserters:
+                for dp in deserters:
+                    session.kill_player(dp.user_id, 'desperation_totem')
+                names = ", ".join(f"**{d.name}**" for d in deserters)
+                embed = create_embed("💀 Desperation Totem Activated", f"The following players failed to vote and have died: {names}")
+                await send_to_game_channel("", embed=embed)
+                # Proceed immediately to night after forced deaths
+                if self.phase_timer_task:
+                    self.phase_timer_task.cancel()
+                await asyncio.sleep(1)
+                await self._start_night_phase_messages(session)
+                return
+        except Exception:
+            logger.exception('Error processing desperation totem deaths')
 
         # Otherwise start night phase after a brief pause
         await asyncio.sleep(3)
