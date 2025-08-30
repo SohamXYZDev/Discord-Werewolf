@@ -140,14 +140,23 @@ async def remove_player_role(user: discord.Member) -> bool:
 
 async def send_to_game_channel(content: str = "", embed: discord.Embed = None) -> bool:
     """Send a message to the configured game channel"""
-    if not _config.game_channel_id:
+    if not getattr(_config, 'game_channel', None) and not getattr(_config, 'game_channel_id', None):
         return False
     
     try:
-        channel = await get_channel_by_id(_config.game_channel_id)
+        # Prefer unified key names (game_channel) but fall back to game_channel_id for older configs
+        channel_id = getattr(_config, 'game_channel', None) or getattr(_config, 'game_channel_id', None)
+        channel = await get_channel_by_id(channel_id)
         if channel:
             # Dedupe identical messages sent very recently to avoid double-posts
-            key = (channel.id, (content or "")[:200], embed.to_dict() if embed else None)
+            # Make embed comparable deterministically
+            embed_key = None
+            if embed:
+                try:
+                    embed_key = tuple(sorted(embed.to_dict().items()))
+                except Exception:
+                    embed_key = str(embed)
+            key = (channel.id, (content or "")[:200], embed_key)
             now = datetime.utcnow()
             last = _recent_sends.get(key)
             if last and (now - last).total_seconds() < _DUPE_WINDOW_SECONDS:
@@ -164,10 +173,14 @@ async def send_to_game_channel(content: str = "", embed: discord.Embed = None) -
 
 async def relay_log_message(content: str = "") -> bool:
     """Relay a log message to the configured logging channel (if set)."""
-    if not _config or not getattr(_config, 'logging_channel_id', None):
+    if not _config:
+        return False
+    # Support multiple possible config keys (logging_channel_id, debug_channel)
+    channel_id = getattr(_config, 'logging_channel_id', None) or getattr(_config, 'debug_channel', None) or getattr(_config, 'debug_channel_id', None)
+    if not channel_id:
         return False
     try:
-        channel = await get_channel_by_id(_config.logging_channel_id)
+        channel = await get_channel_by_id(channel_id)
         if channel:
             await channel.send(content)
             return True
@@ -231,10 +244,13 @@ async def send_dm(user: discord.User, content: str = "", embed: discord.Embed = 
         await user.send(content=content, embed=embed)
         return True
     except discord.Forbidden:
-        _logger.warning(f"Cannot send DM to {user.display_name} - DMs disabled")
+        # user may be Member or User; use str() fallback
+        uname = getattr(user, 'display_name', None) or getattr(user, 'name', None) or str(user)
+        _logger.warning(f"Cannot send DM to {uname} - DMs disabled")
         return False
     except Exception as e:
-        _logger.error(f"Error sending DM to {user.display_name}: {e}")
+        uname = getattr(user, 'display_name', None) or getattr(user, 'name', None) or str(user)
+        _logger.error(f"Error sending DM to {uname}: {e}")
         return False
 
 def get_rate_limiter(user_id: int, cooldown_seconds: int = 5) -> bool:

@@ -317,9 +317,8 @@ class GameManager:
             await self._end_game_with_winners(winner_info, session)
             return
         
-        # If someone was lynched, proceed immediately to night
-        if any(not p.alive for p in session.get_dead_players()):
-            # Cancel timers and start night immediately
+        # If we lynched someone in this resolution, proceed immediately to night
+        if 'lynched_id' in locals():
             if self.phase_timer_task:
                 self.phase_timer_task.cancel()
             await asyncio.sleep(1)
@@ -588,16 +587,27 @@ class GameManager:
             
             # Different prompts based on role
             if role_name == "Werewolf":
-                alive_villagers = [p for p in session.get_alive_players() if p.role.team.value != "werewolf" and p.user_id != player.user_id]
-                if alive_villagers:
-                    targets = ", ".join([p.name for p in alive_villagers])
-                    embed = create_embed("🌙 Night Phase - Werewolf Action")
-                    embed.add_field(
-                        name="Your Action",
-                        value=f"Choose a player to eliminate:\n{targets}\n\nUse: `kill <player name>`",
-                        inline=False
-                    )
-                    await user.send(embed=embed)
+                # Send wolves a DM with their teammates and targets — no public wolfchat
+                wolves = session.get_wolf_players()
+                wolf_names = ", ".join(w.name for w in wolves if w.user_id != player.user_id)
+                alive_nonwolves = [p for p in session.get_alive_players() if p.role.team.value != "werewolf" and p.user_id != player.user_id]
+                if alive_nonwolves:
+                    targets = ", ".join([p.name for p in alive_nonwolves])
+                else:
+                    targets = "No valid targets"
+
+                embed = create_embed("🌙 Night Phase - Werewolf Action")
+                embed.add_field(
+                    name="Wolf Teammates",
+                    value=wolf_names or "(You are the only known wolf)",
+                    inline=False
+                )
+                embed.add_field(
+                    name="Your Action",
+                    value=f"Choose a player to eliminate:\n{targets}\n\nUse: `kill <player name>`",
+                    inline=False
+                )
+                await user.send(embed=embed)
             
             elif role_name == "Seer":
                 alive_others = [p for p in session.get_alive_players() if p.user_id != player.user_id]

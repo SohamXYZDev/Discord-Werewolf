@@ -5,10 +5,11 @@ Voting commands for Discord Werewolf Bot
 import discord
 from discord.ext import commands
 from datetime import datetime, timedelta
+import asyncio
 from src.commands.base import command, PermissionLevel
 from src.core import get_config, get_logger
 from src.utils.helpers import create_embed, create_error_embed, create_success_embed, format_player_list
-from src.game.state import get_session
+from src.game.state import get_session, GamePhase
 
 config = get_config()
 logger = get_logger()
@@ -229,9 +230,9 @@ async def vote_special(ctx: commands.Context, option: str = ""):
         return  # let normal vote_command handle other cases
 
     session = get_session()
-    # Ensure we're in lobby
-    if session.phase != session.GamePhase.LOBBY if hasattr(session, 'GamePhase') else False:
-        await ctx.send("❌ You can only vote to start a game from the lobby.")
+    # Ensure we're in lobby and not currently playing
+    if session.playing or session.phase != GamePhase.LOBBY:
+        await ctx.send("❌ You can only vote to start a game from the lobby when a game isn't already running.")
         return
 
     # Register the vote to start
@@ -256,9 +257,13 @@ async def vote_special(ctx: commands.Context, option: str = ""):
             if not hasattr(session, 'game_manager'):
                 from src.game.phases import GameManager
                 session.game_manager = GameManager(ctx.bot)
-            # Start night/day flow using game_manager
+            # Kick off the async start messages based on current phase
             try:
-                asyncio.create_task(session.game_manager.start_day_phase() if session.phase.value == 'day' else session.game_manager.start_night_phase())
+                # session.start_game() sets the session.phase (usually NIGHT)
+                if session.phase == GamePhase.NIGHT:
+                    asyncio.create_task(session.game_manager._start_night_phase_messages(session))
+                else:
+                    asyncio.create_task(session.game_manager._start_day_phase_messages(session))
             except Exception:
                 logger.exception('Failed to start game flow')
             await ctx.send("🎲 Majority reached — game starting now!")

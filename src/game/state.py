@@ -93,25 +93,28 @@ class GameSession:
         self.vote_counts: Dict[int, int] = {}  # target_id -> vote_count
         self.abstain_votes: Set[int] = set()  # players who abstained
         
-        # Night actions
-        self.night_actions: Dict[int, Dict[str, Any]] = {}  # player_id -> action_data
-        self.night_results: List[str] = []
-        
-        # Game configuration
-        self.gamemode = "default"
-        self.gamemode_votes: Dict[str, Set[int]] = {}  # gamemode -> voter_ids
-        
-        # Kill queue and protection
-        self.kills_tonight: Set[int] = set()  # Players to be killed
-        self.protections_tonight: Set[int] = set()  # Players protected
-        
-        # Wolf team coordination
-        self.wolf_kill_votes: Dict[int, int] = {}  # wolf_id -> target_id
-        self.wolf_kill_target = None
-        
-        # Win tracking
-        self.winners: List[int] = []
-        self.win_reason = ""
+    # Night actions
+    self.night_actions: Dict[int, Dict[str, Any]] = {}  # player_id -> action_data
+    self.night_results: List[str] = []
+
+    # Game configuration
+    self.gamemode = "default"
+    self.gamemode_votes: Dict[str, Set[int]] = {}  # gamemode -> voter_ids
+
+    # Lobby start votes
+    self.start_votes: Set[int] = set()
+
+    # Kill queue and protection
+    self.kills_tonight: Set[int] = set()  # Players to be killed
+    self.protections_tonight: Set[int] = set()  # Players protected
+
+    # Wolf team coordination
+    self.wolf_kill_votes: Dict[int, int] = {}  # wolf_id -> target_id
+    self.wolf_kill_target = None
+
+    # Win tracking
+    self.winners: List[int] = []
+    self.win_reason = ""
     
     # Player Management Methods
     
