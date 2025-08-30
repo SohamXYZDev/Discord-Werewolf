@@ -63,13 +63,37 @@ async def give_command(ctx: commands.Context, target: str = None, totem: str = N
         await ctx.send(embed=embed)
         return
     
-    # TODO: Implement actual totem giving logic
-    embed = create_success_embed(
-        "🎁 Totem Given",
-        f"{player.nick} gave the **{totem}** totem to **{target_player.nick}**."
-    )
-    await ctx.send(embed=embed)
-    logger.info(f"{player.nick} gave {totem} totem to {target_player.nick}")
+    # Normalize totem name
+    tkey = totem.lower().strip()
+
+    # Assign the totem as a template on the target player (simple representation)
+    try:
+        if not hasattr(target_player, 'templates'):
+            target_player.templates = set()
+        target_player.templates.add(tkey)
+
+        # DM the recipient to inform them
+        try:
+            await ctx.author.send(embed=create_success_embed("🎁 Totem Given", f"You gave **{totem}** to **{target_player.name}**."))
+        except Exception:
+            # ignore DM failures
+            pass
+
+        try:
+            await target_player.user.send(embed=create_embed("🔮 You received a Totem", f"You have received the **{totem}** totem. Its effects may be applied during the game."))
+        except Exception:
+            # ignore DM failures
+            pass
+
+        embed = create_success_embed(
+            "🎁 Totem Given",
+            f"{player.nick} gave the **{totem}** totem to **{target_player.name}**."
+        )
+        await ctx.send(embed=embed)
+        logger.info(f"{player.nick} gave {totem} totem to {target_player.name}")
+    except Exception as e:
+        logger.exception(f"Failed to give totem: {e}")
+        await ctx.send(embed=create_error_embed("Error", "Failed to give totem; please try again."))
 
 @command("observe", PermissionLevel.PLAYING, "Observe a player at night", aliases=["watch"])
 async def observe_command(ctx: commands.Context, target: str = None):

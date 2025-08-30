@@ -501,6 +501,14 @@ class GameSession:
             return matches[0]
         
         return None
+
+    def get_player_by_id(self, user_id: int) -> Optional[Player]:
+        """Get a player object by their user ID."""
+        return self.players.get(int(user_id))
+
+    def get_player_by_nick(self, nick: str) -> Optional[Player]:
+        """Alias for get_player_by_name - some command code uses 'nick' terminology."""
+        return self.get_player_by_name(nick)
     
     def reset(self) -> None:
         """Reset the game session to initial state."""
