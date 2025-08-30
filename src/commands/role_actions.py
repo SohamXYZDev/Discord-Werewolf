@@ -9,6 +9,7 @@ from src.commands.base import command, PermissionLevel
 from src.utils.helpers import create_embed, create_error_embed, create_success_embed
 from src.game.state import get_session
 from src.core import get_config
+from src.game.totems import normalize_totem_name, TOTEMS as CANON_TOTEMS
 
 try:
     config = get_config()
@@ -63,8 +64,11 @@ async def give_command(ctx: commands.Context, target: str = None, totem: str = N
         await ctx.send(embed=embed)
         return
     
-    # Normalize totem name
-    tkey = totem.lower().strip()
+    # Normalize totem name and validate
+    tkey = normalize_totem_name(totem)
+    if tkey not in CANON_TOTEMS:
+        await ctx.send(embed=create_error_embed("Unknown Totem", f"Totem '{totem}' not recognized. Use `{config.prefix}totem` to list available totems."))
+        return
 
     # Assign the totem as a template on the target player (simple representation)
     try:
@@ -72,25 +76,26 @@ async def give_command(ctx: commands.Context, target: str = None, totem: str = N
             target_player.templates = set()
         target_player.templates.add(tkey)
 
-        # DM the recipient to inform them
+        # DM the giver with confirmation
         try:
-            await ctx.author.send(embed=create_success_embed("🎁 Totem Given", f"You gave **{totem}** to **{target_player.name}**."))
+            await ctx.author.send(embed=create_success_embed("🎁 Totem Given", f"You gave **{CANON_TOTEMS[tkey]['name']}** to **{target_player.name}**."))
         except Exception:
             # ignore DM failures
             pass
 
+        # DM the recipient privately (best-effort)
         try:
-            await target_player.user.send(embed=create_embed("🔮 You received a Totem", f"You have received the **{totem}** totem. Its effects may be applied during the game."))
+            await target_player.user.send(embed=create_embed("🔮 You received a Totem", f"You have received the **{CANON_TOTEMS[tkey]['name']}** totem. Its effects may be applied during the game."))
         except Exception:
             # ignore DM failures
             pass
 
         embed = create_success_embed(
             "🎁 Totem Given",
-            f"{player.nick} gave the **{totem}** totem to **{target_player.name}**."
+            f"{player.nick} gave **{CANON_TOTEMS[tkey]['name']}** to **{target_player.name}**."
         )
         await ctx.send(embed=embed)
-        logger.info(f"{player.nick} gave {totem} totem to {target_player.name}")
+        logger.info(f"{player.nick} gave {tkey} totem to {target_player.name}")
     except Exception as e:
         logger.exception(f"Failed to give totem: {e}")
         await ctx.send(embed=create_error_embed("Error", "Failed to give totem; please try again."))

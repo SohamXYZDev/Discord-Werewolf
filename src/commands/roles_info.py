@@ -8,6 +8,7 @@ from src.commands.base import command, PermissionLevel
 from src.core import get_config, get_logger
 from src.utils.helpers import create_embed, create_error_embed
 from src.game.roles import ROLE_REGISTRY, GAMEMODE_CONFIGS
+from src.game.totems import TOTEMS as CANON_TOTEMS, normalize_totem_name
 
 config = get_config()
 logger = get_logger()
@@ -269,68 +270,7 @@ async def totem_command(ctx: commands.Context, totem_name: str = ""):
     """Show information about totems"""
     
     # Define totem information
-    TOTEMS = {
-        "protection": {
-            "name": "Protection Totem",
-            "description": "Protects the holder from being killed for one night.",
-            "type": "Beneficial",
-            "given_by": "Shaman"
-        },
-        "revealing": {
-            "name": "Revealing Totem",
-            "description": "When the holder dies, their role is revealed to everyone.",
-            "type": "Beneficial",
-            "given_by": "Shaman"
-        },
-        "influence": {
-            "name": "Influence Totem",
-            "description": "The holder's vote counts twice during lynching.",
-            "type": "Beneficial", 
-            "given_by": "Shaman"
-        },
-        "impatience": {
-            "name": "Impatience Totem",
-            "description": "The day phase ends early if the holder votes.",
-            "type": "Beneficial",
-            "given_by": "Shaman"
-        },
-        "pacifism": {
-            "name": "Pacifism Totem",
-            "description": "The holder cannot vote during lynching.",
-            "type": "Harmful",
-            "given_by": "Crazed Shaman, Wolf Shaman"
-        },
-        "death": {
-            "name": "Death Totem", 
-            "description": "The holder dies at the end of the night.",
-            "type": "Harmful",
-            "given_by": "Crazed Shaman, Wolf Shaman"
-        },
-        "silence": {
-            "name": "Silence Totem",
-            "description": "The holder cannot use their night action for one cycle.",
-            "type": "Harmful",
-            "given_by": "Crazed Shaman, Wolf Shaman"
-        },
-        "desperation": {
-            "name": "Desperation Totem",
-            "description": "The holder must vote for someone during the day or die.",
-            "type": "Harmful",
-            "given_by": "Crazed Shaman, Wolf Shaman"
-        },
-        "misdirection": {
-            "name": "Misdirection Totem",
-            "description": "Actions targeting the holder are redirected to a random player.",
-            "type": "Mixed",
-            "given_by": "Wolf Shaman"
-        },
-        "luck": {
-            "name": "Luck Totem",
-            "description": "Actions targeting the holder have a chance to be redirected.",
-            "type": "Mixed",
-            "given_by": "Wolf Shaman"
-        }
-    }
+    TOTEMS = CANON_TOTEMS
     
     if not totem_name:
         # Show all totems
@@ -412,7 +352,7 @@ async def totem_command(ctx: commands.Context, totem_name: str = ""):
         
         embed = create_embed(f"🔮 {matching_totem['name']}")
         embed.color = type_colors.get(matching_totem['type'], 0x000000)
-        
+        embed.add_field(name="Given By", value=matching_totem['giver'], inline=True)
         embed.add_field(name="Type", value=matching_totem['type'], inline=True)
         embed.add_field(name="Given By", value=matching_totem['given_by'], inline=True)
         embed.add_field(name="Effect", value=matching_totem['description'], inline=False)

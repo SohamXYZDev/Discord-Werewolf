@@ -12,6 +12,7 @@ import discord
 from src.core import get_config, get_logger
 from src.game.roles import Team, WinCondition
 from src.utils.helpers import send_to_game_channel, send_dm, create_embed, create_success_embed, create_error_embed
+from src.game.totems import normalize_totem_name, TOTEMS as CANON_TOTEMS
 
 config = get_config()
 logger = get_logger()
@@ -283,31 +284,44 @@ class GameManager:
         
         # Calculate lynch result
         vote_status = self.get_vote_status(session)
-        
+
         embed = create_embed("☀️ Day Phase Ended", f"Day {self.day_count} has ended.")
-        
+
         if vote_status["vote_counts"]:
             # Find player(s) with most votes
             max_votes = max(vote_status["vote_counts"].values())
             most_voted = [pid for pid, votes in vote_status["vote_counts"].items() if votes == max_votes]
-            
+
             if len(most_voted) == 1 and max_votes >= vote_status["majority_needed"]:
                 # Lynch the player
                 lynched_id = most_voted[0]
                 lynched_player = session.players[lynched_id]
-                
-                session.kill_player(lynched_id, "lynch")
-                
-                embed.add_field(
-                    name="Lynch Result",
-                    value=f"**{lynched_player.name}** was lynched by the village!\n"
-                          f"They were a **{lynched_player.role.info.name}**.",
-                    inline=False
-                )
-                
+                # Check for revealing totem which prevents death but reveals role
+                templates = getattr(lynched_player, 'templates', set())
+                if 'revealing' in templates:
+                    embed.add_field(
+                        name="Lynch Result",
+                        value=f"**{lynched_player.name}** would have been lynched, but their revealing totem prevented death.\n"
+                              f"Their role is revealed: **{lynched_player.role.info.name}**.",
+                        inline=False
+                    )
+                    # remove one-time revealing effect
+                    try:
+                        lynched_player.templates.discard('revealing')
+                    except Exception:
+                        pass
+                else:
+                    session.kill_player(lynched_id, "lynch")
+                    embed.add_field(
+                        name="Lynch Result",
+                        value=f"**{lynched_player.name}** was lynched by the village!\n"
+                              f"They were a **{lynched_player.role.info.name}**.",
+                        inline=False
+                    )
+
                 # Check for special lynch effects (Fool, Jester, etc.)
                 await self._handle_lynch_effects(lynched_player, session)
-                
+
             elif len(most_voted) > 1:
                 # Tie vote - no lynch
                 tied_players = [session.players[pid].name for pid in most_voted]
@@ -331,18 +345,18 @@ class GameManager:
                 value="No votes were cast. No one was lynched today.",
                 inline=False
             )
-        
+
         # Show vote summary
         if vote_status["vote_counts"]:
             vote_summary = []
             for player_id, vote_count in sorted(vote_status["vote_counts"].items(), key=lambda x: x[1], reverse=True):
                 player_name = session.players[player_id].name
                 vote_summary.append(f"**{player_name}**: {vote_count} votes")
-            
+
             if vote_status["abstain_count"] > 0:
                 vote_summary.append(f"**Abstain**: {vote_status['abstain_count']} votes")
-            
-                embed.add_field(name="Vote Summary", value="\n".join(vote_summary), inline=False)
+
+            embed.add_field(name="Vote Summary", value="\n".join(vote_summary), inline=False)
 
             await send_to_game_channel("", embed=embed)
         
@@ -476,31 +490,114 @@ class GameManager:
                 target_id = action["target"]
                 protections[target_id] = player_id
         
-        # Process wolf kills
+        # Process wolf kills with totem interactions
+        wolves_were_sick = False
+        killed_by_wolves = []
         for target_id, wolf_count in wolf_targets.items():
+            # If protected by Guardian Angel
             if target_id in protections:
-                # Player was protected
                 protector_id = protections[target_id]
                 protector = session.players[protector_id]
                 results["other_effects"].append(
                     f"**{session.players[target_id].name}** was protected by a Guardian Angel!"
                 )
-            else:
-                # Player dies
-                session.kill_player(target_id, "wolf")
-                results["deaths"][target_id] = "was killed by wolves"
+                continue
+
+            target_player = session.players.get(target_id)
+            if not target_player or not target_player.alive:
+                continue
+
+            templates = getattr(target_player, 'templates', set())
+
+            # Death totem: mark for death at end of night (still considered a death)
+            if 'death' in templates:
+                # remove one-time death totem
+                try:
+                    target_player.templates.discard('death')
+                except Exception:
+                    pass
+                session.kill_player(target_id, "death_totem")
+                results["deaths"][target_id] = "died from a cursed totem"
+                killed_by_wolves.append(target_id)
+                continue
+
+            # Lycanthropy: be converted instead of dying
+            if 'lycanthropy' in templates:
+                try:
+                    target_player.templates.discard('lycanthropy')
+                except Exception:
+                    pass
+                # Convert to wolf team
+                # Attempt to find a wolf role class to assign; default to Werewolf
+                from src.game.roles import get_role_by_name
+                newrole = get_role_by_name('werewolf')
+                if newrole:
+                    target_player.role = newrole
+                    results["other_effects"].append(f"**{target_player.name}** was struck by lycanthropy and joined the wolves!")
+                    # converted players do not die this night
+                    continue
+
+            # Pestilence on target: mark wolves sick (handled after determining which wolves targeted anyone)
+            if 'pestilence' in templates:
+                try:
+                    target_player.templates.discard('pestilence')
+                except Exception:
+                    pass
+                wolves_were_sick = True
+
+            # No totem prevented death; kill the player
+            session.kill_player(target_id, "wolf")
+            results["deaths"][target_id] = "was killed by wolves"
+            killed_by_wolves.append(target_id)
         
-        # Process other actions (seer, detective, etc.)
+    # Process other actions (seer, detective, etc.)
         for player_id, action in self.night_actions.items():
             player = session.players[player_id]
             role = player.role
             
             if role.info.name in ["Seer", "Detective"] and "target" in action:
-                # Send investigation result to player
+                # Handle deceit/silence templates on the target
                 target_id = action["target"]
+                target_player = session.players.get(target_id)
+                target_templates = getattr(target_player, 'templates', set()) if target_player else set()
+
+                # If silence template present on actor, they cannot act
+                actor_templates = getattr(player, 'templates', set())
+                if 'silence' in actor_templates:
+                    # actor cannot act
+                    await send_dm(player.user, "Your totem prevents you from using that ability tonight.")
+                    continue
+
+                # If deceit on target, flip the investigation
+                if 'deceit' in target_templates:
+                    # Fake response
+                    fake_msg = f"Investigation: {target_player.name} appears to be of the opposite alignment or an unknown role."
+                    await send_dm(player.user, fake_msg)
+                    continue
+
                 result = role.act(target=target_id, players_dict=session.players)
-                if result["success"]:
-                    await send_dm(player.user, result["message"])
+                if result.get("success"):
+                    await send_dm(player.user, result.get("message") or str(result))
+
+        # Handle retribution: if a player with retribution was killed, pick one wolf who targeted them and kill that wolf
+        try:
+            for dead_id in list(killed_by_wolves):
+                dead_player = session.players.get(dead_id)
+                if not dead_player:
+                    continue
+                templates = getattr(dead_player, 'templates', set())
+                if 'retribution' in templates:
+                    # find wolves who targeted this player
+                    offender_wolves = [wid for wid, tid in self.night_actions.items() if tid.get('action') == 'kill' and tid.get('target') == dead_id]
+                    # offender_wolves uses action owner ids, filter by wolf team
+                    wolf_offenders = [w for w in offender_wolves if w in session.players and session.players[w].role.info.team == Team.WOLF]
+                    if wolf_offenders:
+                        import random
+                        victim_wolf = random.choice(wolf_offenders)
+                        session.kill_player(victim_wolf, 'retribution_totem')
+                        results['other_effects'].append(f"Retribution activated: a wolf ({session.players[victim_wolf].name}) has died in retaliation.")
+        except Exception:
+            logger.exception('Error handling retribution totem')
         
         return results
     
