@@ -112,12 +112,17 @@ Commands (summary)
 
   Night (PM-only) actions (players should DM these to the bot)
 
-  - `kill <player>` — werewolf team kill (PM-only)
-  - `see <player>` — Seer/Oracle/Augur investigation (PM-only)
-  - `detect <player>` — Detective/Detective-like investigations (PM-only)
-  - `protect <player>` — Guardian Angel / Bodyguard protections (PM-only)
+  Players should send these commands to the bot via DM during the night phase. The bot's help command now dynamically lists the authoritative set of PM-only/night commands available for your current game and role.
+
+  - `kill <player>` — werewolf/team kill (PM-only)
+  - `see <player>` — Seer / Seer-like investigator (PM-only)
+  - `detect <player>` — Detective / Detective-like investigator (PM-only)
+  - `protect <player>` or `guard <player>` — Guardian Angel / Bodyguard protections (PM-only)
+  - `visit <player>` — Visit-type actions (Harlot, Succubus, etc.) (PM-only)
   - `pass` — Skip your night action (PM-only)
-  - `myrole` — Check your role and night action availability (PM-only)
+  - `myrole` — Check your role and night-action availability (PM-only)
+
+  Note: Some commands have aliases or appear in multiple command modules (for example `protect` vs `guard`, or `kill` in both `night_actions.py` and `game.py`). Use `!help <command>` while in-game (or DM the bot) to see which PM-only commands are available to you based on your assigned role.
 
   Role / Action commands (examples)
 

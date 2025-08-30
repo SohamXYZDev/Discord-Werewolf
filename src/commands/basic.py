@@ -137,19 +137,22 @@ async def help_command(ctx: commands.Context, command_name: str = ""):
                 inline=False
             )
 
-            # Explicitly list night (PM-only) actions so players know what to use in DMs
-            embed.add_field(
-                name="Night Actions (PM only)",
-                value=(
-                    "`kill` — Wolf kill target\n"
-                    "`see` — Seer/night investigator\n"
-                    "`detect` — Detective night investigation\n"
-                    "`protect` — Guardian Angel protection\n"
-                    "`pass` — Skip your night action\n"
-                    "`myrole` — Check your role and status in DMs"
-                ),
-                inline=False
-            )
+            # Dynamically list night (PM-only) actions so players see the authoritative set
+            night_cmds = [c for c in available_commands if getattr(c, 'pm_only', False)]
+            if night_cmds:
+                # Format: `!cmd` — short description (fallback to command.description)
+                def fmt(c):
+                    desc = getattr(c, 'description', None) or ''
+                    # keep only first sentence for brevity
+                    desc_line = desc.split('\n')[0] if desc else ''
+                    return f"`{config.prefix}{c.name}` — {desc_line}" if desc_line else f"`{config.prefix}{c.name}`"
+
+                night_text = "\n".join(fmt(c) for c in night_cmds)
+                embed.add_field(
+                    name="Night Actions (PM only)",
+                    value=night_text,
+                    inline=False
+                )
 
             # Role-specific and other role-action commands (may be PM-only depending on role)
             embed.add_field(
