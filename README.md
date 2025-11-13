@@ -193,12 +193,6 @@ Commands (summary)
   - To test log relay, provide `logging_channel_id` in settings and restart the bot.
   - If night actions or votes aren't triggering immediate transitions, ensure the `GameManager` is attached to `session.game_manager` and that players submit actions via PM.
 
-  If you want, I can:
-
-  - Add per-command usage examples in README (detailed signatures)
-  - Generate a small unit test harness to simulate a short game and exercise vote-to-start, immediate transitions, and totem effects
-  - Create examples for popular gamemodes and recommended role lists
-
   ***
 
-  Updated: August 30, 2025
+  Updated: 13th November, 2025
